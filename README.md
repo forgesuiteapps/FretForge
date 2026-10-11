@@ -23,8 +23,6 @@ A Windows desktop charting tool for guitar, bass, rhythm, drums, and Guitar Hero
 
 FretForge is a native Windows desktop application with a Rust interface and conversion engine. It imports Guitar Pro scores, helps you map and preview playable note charts, and exports a Clone Hero song folder with optional audio, lyrics, artwork, and other media. Guitar Pro decoding uses a bundled JavaScript/alphaTab bridge.
 
-It is inspired by and derived from **Chart Starter** by ShyTheProgrammer, with a redesigned interface and independent conversion logic.
-
 ## Features
 
 - **Guitar Pro import:** GP3, GP4, GP5, GPX, and GP7/8 scores, including playback-map repeats and tuplets.
@@ -175,7 +173,7 @@ Bug reports, reproducible charting issues, and feature suggestions are welcome t
 
 ## License and acknowledgments
 
-FretForge is distributed under the [MIT License](LICENSE) and is derived from **Chart Starter** by **ShyTheProgrammer**. The project uses **alphaTab** for Guitar Pro import and bundles third-party runtimes and libraries subject to their respective licenses. See [Third-Party Notices](THIRD-PARTY-NOTICES.md) and the license files under `vendor/` for details. Optional Demucs-based stem separation has its own dependency and model licensing considerations.
+FretForge is distributed under the [MIT License](LICENSE). The project uses **alphaTab** for Guitar Pro import and bundles third-party runtimes and libraries subject to their respective licenses. See [Third-Party Notices](THIRD-PARTY-NOTICES.md) and the license files under `vendor/` for details. Optional Demucs-based stem separation has its own dependency and model licensing considerations.
 
 ---
 
