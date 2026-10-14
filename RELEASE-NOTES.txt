@@ -1,0 +1,13 @@
+FretForge - GitHub source archive
+
+Build instructions are in README.md.
+This ZIP contains source code, not the Windows executable.
+Install Rust and Windows C++ build tools; supply Node.js and FFmpeg.
+
+Updated build, October 13, 2026:
+- LRC, TTML and TXT lyric import.
+- TTML Line/Phrase imports whole lines; Word imports timed words in each phrase.
+- Expert-only .chart difficulty generation.
+- Clearer navigation and collapsible advanced settings.
+
+Review generated charts before sharing. Optional stem tools require separate setup.

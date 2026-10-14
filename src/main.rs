@@ -9,6 +9,7 @@ mod star_power;
 mod timing;
 mod lyrics;
 mod fidelity;
+mod difficulties;
 fn app_icon()->eframe::egui::IconData {
     let image=image::load_from_memory(include_bytes!("../assets/fretforge.png")).expect("bundled icon").into_rgba8();
     eframe::egui::IconData {width:image.width(),height:image.height(),rgba:image.into_raw()}

@@ -30,7 +30,62 @@ pub fn parse(text:&str)->Result<Document,String>{
  entries.sort_by_key(|e|e.ms);entries.dedup_by(|a,b|a.ms==b.ms&&a.text==b.text&&a.phrase==b.phrase);
  Ok(Document{entries,repairs,enhanced,metadata})
 }
-pub fn load(o:&Options)->Result<Document,String>{let text=if let Some(text)=&o.lyric_text{text.clone()}else{let p=o.lyrics.as_ref().ok_or("Open an LRC file to add synchronized lyrics.")?;std::fs::read_to_string(p).map_err(|e|format!("Cannot read lyrics: {e}"))?};parse(&text)}
+/// Plain text receives provisional three-second line spacing for manual alignment.
+pub fn import(text:&str,extension:&str)->Result<Document,String>{
+ match extension.to_ascii_lowercase().as_str(){
+ "lrc"=>parse(text),
+ "txt"=>{if parse(text).is_ok(){return parse(text)}let lrc=text.trim_start_matches('\u{feff}').lines().map(str::trim).filter(|l|!l.is_empty()).enumerate().map(|(i,line)|format!("[{}]{line}\n",stamp(i as i64*3000))).collect::<String>();parse(&lrc)},
+ "ttml"=>import_ttml(text),
+_=>Err("Choose an .lrc, .ttml or .txt lyric file.".into())
+ }
+}
+fn import_ttml(text:&str)->Result<Document,String>{
+ use xml::reader::{EventReader,XmlEvent};
+ struct Phrase{depth:usize,start:i64,chunks:Vec<(i64,String)>,timed:bool}
+ let mut stack=vec![0i64];let mut paragraph:Option<Phrase>=None;
+ let mut absolute=false;let mut line_only=false;let mut entries=Vec::new();let mut phrase=0;
+ for event in EventReader::from_str(text){match event.map_err(|e|format!("Invalid TTML: {e}"))?{
+  XmlEvent::StartElement{name,attributes,..}=>{
+   if name.local_name=="tt"{if let Some(a)=attributes.iter().find(|a|a.name.namespace.as_deref()==Some("http://lrc.red/lyric-ttml-internal")&&a.name.local_name=="timing"){absolute=true;line_only=a.value.eq_ignore_ascii_case("Line")||a.value.eq_ignore_ascii_case("Phrase");}}
+   let parent=*stack.last().unwrap();let begin=attributes.iter().find(|a|a.name.local_name=="begin").map(|a|ttml_time(&a.value)).transpose()?;
+   // lrc.red uses absolute song timestamps, including bare decimal seconds.
+   let at=if absolute{begin.unwrap_or(parent)}else{parent.checked_add(begin.unwrap_or(0)).ok_or("TTML time overflow.")?};
+   if at>=86_400_000{return Err("TTML timestamps must be within 24 hours.".into());}stack.push(at);
+   if name.local_name=="p"{paragraph=Some(Phrase{depth:stack.len(),start:at,chunks:Vec::new(),timed:false});}
+   else if let Some(p)=&mut paragraph{if name.local_name=="span"&&begin.is_some(){p.timed=true;}if name.local_name=="br"{p.chunks.push((at," ".into()));}}
+  },
+  XmlEvent::Characters(s)|XmlEvent::CData(s)|XmlEvent::Whitespace(s)=>{if let Some(p)=&mut paragraph{p.chunks.push((*stack.last().unwrap(),s));}},
+  XmlEvent::EndElement{..}=>{
+   if paragraph.as_ref().is_some_and(|p|p.depth==stack.len()){
+    let p=paragraph.take().unwrap();let enhanced=p.timed&&!line_only;
+    if enhanced{
+     // Whitespace separates words; contiguous timed syllables form one word,
+     // whose attack is the first syllable's original timestamp.
+     let mut word=String::new();let mut at=p.start;
+     for (ms,chunk) in p.chunks{for ch in chunk.chars(){if ch.is_whitespace(){if !word.is_empty(){entries.push(Entry{ms:at,text:std::mem::take(&mut word),line:phrase+1,phrase,enhanced:true});}}else{if word.is_empty(){at=ms;}word.push(ch);}}}
+     if !word.is_empty(){entries.push(Entry{ms:at,text:word,line:phrase+1,phrase,enhanced:true});}
+    }else{let txt=p.chunks.into_iter().map(|(_,s)|s).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");if !txt.is_empty(){entries.push(Entry{ms:p.start,text:txt,line:phrase+1,phrase,enhanced:false});}}
+    phrase+=1;
+   }stack.pop();
+  },_=>{}
+ }}
+ if entries.is_empty(){return Err("No timed lyric phrases found in TTML.".into());}
+ let enhanced=entries.iter().any(|e|e.enhanced);entries.sort_by_key(|e|e.ms);
+ Ok(Document{entries,enhanced,repairs:Vec::new(),metadata:Vec::new()})
+}
+fn ttml_time(value:&str)->Result<i64,String>{
+ let seconds=if let Some(v)=value.strip_suffix("ms"){v.parse::<f64>().ok().map(|n|n/1000.)}
+ else if let Some(v)=value.strip_suffix('s'){v.parse::<f64>().ok()}
+ else if let Some(v)=value.strip_suffix('m'){v.parse::<f64>().ok().map(|n|n*60.)}
+ else if let Some(v)=value.strip_suffix('h'){v.parse::<f64>().ok().map(|n|n*3600.)}
+ else if !value.contains(':'){value.parse::<f64>().ok()}
+ else {let p:Vec<_>=value.split(':').collect();match p.as_slice(){
+  [m,s]=>match(m.parse::<u64>(),s.parse::<f64>()){(Ok(m),Ok(s))if (0.0..60.0).contains(&s)=>Some(m as f64*60.+s),_=>None},
+  [h,m,s]=>match(h.parse::<u64>(),m.parse::<u64>(),s.parse::<f64>()){(Ok(h),Ok(m),Ok(s))if m<60&&(0.0..60.0).contains(&s)=>Some(h as f64*3600.+m as f64*60.+s),_=>None},_=>None
+ }};
+ seconds.filter(|s|s.is_finite()&&*s>=0.&&*s<86400.).map(|s|(s*1000.).round() as i64).ok_or_else(||format!("Unsupported TTML time '{value}'. Use mm:ss.mmm, hh:mm:ss.mmm or h/m/s/ms offsets; frame and tick times need conversion."))
+}
+pub fn load(o:&Options)->Result<Document,String>{if let Some(text)=&o.lyric_text{return parse(text)}let p=o.lyrics.as_ref().ok_or("Open an LRC, TTML or TXT file to add lyrics.")?;let text=std::fs::read_to_string(p).map_err(|e|format!("Cannot read lyrics: {e}"))?;import(&text,p.extension().and_then(|e|e.to_str()).unwrap_or(""))}
 impl Document {
  pub fn lrc(&self,offset:i64)->String{let mut groups:std::collections::BTreeMap<usize,Vec<&Entry>>=std::collections::BTreeMap::new();for e in &self.entries{groups.entry(e.phrase).or_default().push(e);}let mut lines=Vec::new();for group in groups.values(){let start=(group[0].ms+offset).max(0);let mut line=format!("[{}]",stamp(start));if group[0].enhanced{for e in group{line.push_str(&format!("<{}>{} ",stamp((e.ms+offset).max(0)),e.text));}}else{line.push_str(&group[0].text);}lines.push((start,line.trim_end().to_string()));}lines.sort_by_key(|p|p.0);{let mut out=self.metadata.iter().map(|l|l.clone()+"\n").collect::<String>();out.extend(lines.into_iter().map(|(_,l)|l+"\n"));out}}
  pub fn review(&self,history:&[Repair])->Vec<Repair>{let mut out=history.to_vec();for r in &self.repairs{if !out.contains(r){out.push(r.clone());}}out}
@@ -42,6 +97,13 @@ pub fn from_guitar_pro(score:&crate::engine::Score,o:&Options,track:usize,verse:
 }
 #[cfg(test)]mod tests{
  use super::*;
+ #[test]fn line_ttml_keeps_bare_second_timing_and_whole_phrases(){let text=r#"<tt xmlns:lrc="http://lrc.red/lyric-ttml-internal" lrc:timing="Line"><body><div begin="22.295"><p begin="22.295" end="26.948">A whole line</p><p begin="29.483" end="31.727"><span>Another</span> line</p></div></body></tt>"#;let d=import(text,"ttml").unwrap();assert!(!d.enhanced);assert_eq!(d.entries.len(),2);assert_eq!(d.entries[0].ms,22295);assert_eq!(d.entries[1].ms,29483);assert_eq!(d.entries[0].text,"A whole line");assert_eq!(d.entries[1].text,"Another line");assert_ttml_chart(&d);}
+ fn assert_ttml_chart(d:&Document){use crate::engine::{self,Score,Track,Note,Tempo};let s=Score{ppq:1000,end:300000.,tempos:vec![Tempo{tick:0.,bpm:60.}],tracks:vec![Track{index:0,percussion:true,notes:vec![Note{tick:0.,pitch:36,..Default::default()}],..Default::default()}],..Default::default()};let o=Options{bpm:60.,tracks:[Some(0),None,None,None,None,None,None],lyric_text:Some(d.lrc(0)),..Default::default()};let (chart,_)=engine::build_chart(&s,&o).unwrap();for e in &d.entries{assert!(chart.contains(&format!("{} = E \"lyric {}\"",e.ms,e.text.replace('"',"'"))),"Missing event at {}",e.ms);}let phrases=d.entries.iter().map(|e|e.phrase).collect::<std::collections::BTreeSet<_>>().len();assert_eq!(chart.matches("phrase_start").count(),phrases);assert_eq!(chart.matches("phrase_end").count(),phrases);}
+ #[test]fn supplied_line_example_charts_each_phrase_when_requested(){if let Ok(path)=std::env::var("FRETFORGE_TTML_LINE_TEST_FILE"){let text=std::fs::read_to_string(path).unwrap();let d=import(&text,"ttml").unwrap();assert_eq!(d.entries.len(),31);assert!(!d.enhanced);assert_eq!(d.entries[0].ms,22295);assert_eq!(d.entries[1].ms,29483);assert_ttml_chart(&d);}}
+ #[test]fn lyric_ttml_short_clocks_are_absolute_and_syllables_stay_joined(){let text=r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:lrc="http://lrc.red/lyric-ttml-internal" lrc:timing="Word"><body><div begin="0:15.355"><p begin="0:15.355"><span begin="0:15.355">Some</span><span begin="0:16.000">one</span> <span begin="0:16.500">sings</span></p><p begin="1:06.720">Next line</p></div></body></tt>"#;let d=import(text,"ttml").unwrap();assert_eq!(d.entries[0].ms,15355);assert_eq!(d.entries[0].text,"Someone");assert_eq!(d.entries[1].text,"sings");assert_eq!(d.entries[1].ms,16500);assert_eq!(d.entries[2].ms,66720);assert_eq!(d.entries[0].phrase,d.entries[1].phrase);assert_ne!(d.entries[1].phrase,d.entries[2].phrase);assert_eq!(ttml_time("3:24.188").unwrap(),204188);assert!(ttml_time("0:60.000").is_err());assert!(ttml_time("-1:15.000").is_err());}
+ #[test]fn supplied_ttml_example_imports_when_requested(){if let Ok(path)=std::env::var("FRETFORGE_TTML_TEST_FILE"){let text=std::fs::read_to_string(path).unwrap();let d=import(&text,"ttml").unwrap();assert_eq!(d.entries.iter().map(|e|e.phrase).collect::<std::collections::BTreeSet<_>>().len(),41);assert!(d.enhanced);assert!(d.entries.len()>41);assert_eq!(d.entries.first().unwrap().ms,15355);assert_eq!(d.entries.iter().filter(|e|e.phrase==40).map(|e|e.ms).min(),Some(204188));assert_eq!(d.entries[1].ms,15615);assert_eq!(d.entries[2].ms,15816);assert_ttml_chart(&d);assert!(parse(&d.lrc(0)).is_ok());}}
+ #[test]fn imports_ttml_namespaces_entities_and_nested_timing(){let d=import(r#"<tt xmlns="http://www.w3.org/ns/ttml"><body begin="1s"><div><p begin="00:00:02.500"><span>Hello &amp;</span><br/>world</p></div></body></tt>"#,"ttml").unwrap();assert_eq!(d.entries[0].ms,3500);assert_eq!(d.entries[0].text,"Hello & world");assert!(import("<tt>","ttml").is_err());}
+ #[test]fn plain_text_has_editable_provisional_timing(){let d=import("\u{feff}First\n\nSecond","TXT").unwrap();assert_eq!(d.entries[1].ms,3000);assert_eq!(d.entries[0].text,"First");assert!(import("","txt").is_err());assert_eq!(import("[00:07]Timed","txt").unwrap().entries[0].ms,7000);}
  #[test]fn backward_runs_are_evenly_spaced_without_reordering_words(){let d=parse("[00:10.000]<00:10.000>A <00:08.000>B <00:07.000>C <00:16.000>D").unwrap();assert_eq!(d.entries.iter().map(|e|e.ms).collect::<Vec<_>>(),vec![10000,12000,14000,16000]);assert_eq!(d.entries.iter().map(|e|e.text.as_str()).collect::<Vec<_>>(),vec!["A","B","C","D"]);assert_eq!(d.repairs.len(),2);assert_eq!(d.repairs[0].original_ms,8000);assert_eq!(d.repairs[0].repaired_ms,12000);assert!(parse(&d.lrc(0)).unwrap().repairs.is_empty());}
  #[test]fn cross_line_repairs_use_the_next_lyric_and_preserve_phrases(){let d=parse("[00:10]<00:10>A <00:08>B\n[00:14]<00:14>C <00:15>D").unwrap();assert_eq!(d.entries[1].ms,12000);assert_eq!(d.entries[1].phrase,0);assert_eq!(d.entries[2].phrase,1);assert!(d.lrc(500).contains("<00:12.500>B"));}
  #[test]fn standard_multiple_timestamps_offsets_and_order_are_preserved(){let d=parse("[offset:100]\n[00:03.000][00:01.50]Hello").unwrap();assert_eq!(d.entries.iter().map(|e|e.ms).collect::<Vec<_>>(),vec![1600,3100]);assert!(d.repairs.is_empty());assert!(!d.enhanced);}

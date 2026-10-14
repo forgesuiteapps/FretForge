@@ -31,7 +31,7 @@ FretForge is a native Windows desktop application with a Rust interface and conv
 - **Charting assistance:** fret mapping, chord and sustain handling, HOPO/strum markers, Expert taps where applicable, and automatic Star Power placement.
 - **Drum mapping:** named source sounds, cymbal flags, ghost/accent dynamics, collision diagnostics and kick handling.
 - **Audio synchronization:** waveform-backed note preview, playback controls, millisecond audio alignment, and shared chart shifts.
-- **Lyrics:** create, import and edit standard or enhanced LRC; align lyrics to audio and review repaired timestamps.
+- **Lyrics:** create, import and edit standard or enhanced LRC, TTML phrases, and plain TXT; align lyrics to audio and review repaired timestamps.
 - **Media packaging:** recording, video, artwork, backgrounds, highways, icons, stems and other optional assets.
 - **Local stem separation (optional):** install a private Demucs environment and generate stems from a recording.
 - **Reviewable output:** conversion reports, charting warnings, JSON project saves, and in-app help.
@@ -70,7 +70,7 @@ If no portable release is available, [build from source](#building-from-source).
 2. **Select tracks.** Assign the desired Guitar, Bass, Rhythm, Drums or GHL parts. Check note previews, drum mappings and collision warnings.
 3. **Configure the song.** Set metadata, enabled difficulties, overall BPM, optional constant-tempo behavior, and instrument ratings.
 4. **Align a recording.** Add matching audio in Pattern Preview, play it against the chart, and adjust the waveform alignment or enter a precise offset. You can also shift all charted notes together.
-5. **Add optional content.** Import/edit LRC lyrics and attach artwork, video, backgrounds, or audio stems.
+5. **Add optional content.** Import/edit LRC, TTML or TXT lyrics and attach artwork, video, backgrounds, or audio stems.
 6. **Export.** Select a destination and create the song package.
 7. **Review and playtest.** Open `notes.chart` in Moonscraper, inspect timing, notes, sustains, Star Power, lyrics and every difficulty, then test the song in Clone Hero.
 
@@ -182,3 +182,9 @@ FretForge is distributed under the [MIT License](LICENSE). The project uses **al
 **Import → Map → Align → Export → Review → Play**
 
 </div>
+
+## Expert chart difficulty generator
+
+Open **Difficulties** to select an Expert-only Clone Hero `.chart` file, preview note counts, and save a separate copy with Easy, Medium and Hard. Guitar, Bass, Rhythm, Drums and GHL parts are supported. Song, timing, global events and Expert sections are preserved. Existing lower difficulties are rejected so they cannot be overwritten accidentally. MIDI input is not supported. Reductions simplify spacing, chords and fret range and require review and playtesting.
+
+TTML Line/Phrase timing imports one complete lyric event per paragraph; Word timing imports each word at its source span time, grouped into its original phrase (adjacent syllables join into words at the first syllable timestamp). TTML accepts bare decimal seconds and paragraph start times with mm:ss.mmm or hh:mm:ss.mmm clock times and h/m/s/ms offset notation, including inherited timing. lrc.red lyric TTML uses absolute song clock times, preserving line timing without adding parent timestamps. Frame/tick-based TTML needs conversion first. Plain TXT starts with provisional three-second line spacing; edit and align each line in Lyrics before exporting. Timed LRC saved as `.txt` retains its timestamps. Imported formats export as LRC.
